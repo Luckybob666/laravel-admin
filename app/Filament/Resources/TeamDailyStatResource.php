@@ -6,6 +6,8 @@ use App\Filament\Resources\TeamDailyStatResource\Pages;
 use App\Models\TeamDailyStat;
 use App\Models\Team;
 use App\Models\FixedExpense;
+use App\Models\DailyIpCost;
+use App\Services\TeamDailyStatCalculationService;
 use Carbon\Carbon;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -19,6 +21,7 @@ use Filament\Forms\Get;
 use Filament\Forms\Set;
 use App\Filament\Exports\TeamDailyStatExporter;
 use Filament\Tables\Actions\ExportAction;
+use Filament\Tables\Actions\Action;
 
 class TeamDailyStatResource extends Resource
 {
@@ -55,16 +58,19 @@ class TeamDailyStatResource extends Resource
                 ->format('Y-m-d')
                 ->native(false)
                 ->reactive()
-                ->unique(table: 'team_daily_stats', column: 'date', ignoreRecord: true)
+                ->disabled(fn($context) => $context === 'edit')
+                ->required()
                 ->validationMessages([
                     'required' => '日期不能为空',
-                    'unique' => '该团队在该日期的数据已存在，请选择其他日期或团队',
                 ])
                 ->afterStateUpdated(function ($state, Set $set, Get $get) {
                     // $state 就是更新后的 date
                     $date   = $state;
                     $teamId = (int) $get('team_id');
-                    $set('fixed_cost', $date && $teamId ? static::computeFixedCost(\Carbon\Carbon::parse($date), $teamId) : 0);
+                    $msgCount = (int) $get('msg_count');
+                    $service = new TeamDailyStatCalculationService();
+                    $set('fixed_cost', $date && $teamId ? $service->computeFixedCost(\Carbon\Carbon::parse($date), $teamId) : 0);
+                    $set('var_server_ip_cost', $date && $teamId ? $service->computeServerIpCost(\Carbon\Carbon::parse($date), $teamId, $msgCount) : 0);
                 }),
             
                 Forms\Components\Select::make('team_id')
@@ -75,6 +81,7 @@ class TeamDailyStatResource extends Resource
                 ->required()
                 ->native(false)
                 ->reactive()
+                ->disabled(fn($context) => $context === 'edit')
                 ->validationMessages([
                     'required' => '请选择团队',
                     'exists' => '选择的团队不存在',
@@ -83,7 +90,10 @@ class TeamDailyStatResource extends Resource
                     // $state 就是更新后的 team_id
                     $teamId = (int) $state;
                     $date   = $get('date');
-                    $set('fixed_cost', $date && $teamId ? static::computeFixedCost(\Carbon\Carbon::parse($date), $teamId) : 0);
+                    $msgCount = (int) $get('msg_count');
+                    $service = new TeamDailyStatCalculationService();
+                    $set('fixed_cost', $date && $teamId ? $service->computeFixedCost(\Carbon\Carbon::parse($date), $teamId) : 0);
+                    $set('var_server_ip_cost', $date && $teamId ? $service->computeServerIpCost(\Carbon\Carbon::parse($date), $teamId, $msgCount) : 0);
                 }),
             
             
@@ -102,7 +112,8 @@ class TeamDailyStatResource extends Resource
                     $date   = $get('date');
                     $teamId = (int) $get('team_id');
                     if ($date && $teamId) {
-                        $set('fixed_cost', static::computeFixedCost(\Carbon\Carbon::parse($date), $teamId));
+                        $service = new TeamDailyStatCalculationService();
+                        $set('fixed_cost', $service->computeFixedCost(\Carbon\Carbon::parse($date), $teamId));
                     }
                 }),
 
@@ -120,6 +131,17 @@ class TeamDailyStatResource extends Resource
                     ->label('服务器与IP费用(美金)')
                     ->numeric()
                     ->default(0)
+                    ->disabled()
+                    ->dehydrated()
+                    ->afterStateHydrated(function (Set $set, Get $get) {
+                        $date   = $get('date');
+                        $teamId = (int) $get('team_id');
+                        $msgCount = (int) $get('msg_count');
+                        if ($date && $teamId) {
+                            $service = new TeamDailyStatCalculationService();
+                            $set('var_server_ip_cost', $service->computeServerIpCost(\Carbon\Carbon::parse($date), $teamId, $msgCount));
+                        }
+                    })
                     ->validationMessages([
                         'required' => '服务器与IP费用不能为空',
                         'numeric' => '服务器与IP费用必须是数字',
@@ -141,6 +163,14 @@ class TeamDailyStatResource extends Resource
                     ->numeric()
                     ->default(0)
                     ->minValue(0)
+                    ->reactive()
+                    ->afterStateUpdated(function ($state, Set $set, Get $get) {
+                        $msgCount = (int) $state;
+                        $date   = $get('date');
+                        $teamId = (int) $get('team_id');
+                        $service = new TeamDailyStatCalculationService();
+                        $set('var_server_ip_cost', $date && $teamId ? $service->computeServerIpCost(\Carbon\Carbon::parse($date), $teamId, $msgCount) : 0);
+                    })
                     ->validationMessages([
                         'required' => '发送消息条数不能为空',
                         'numeric' => '发送消息条数必须是数字',
@@ -235,8 +265,73 @@ class TeamDailyStatResource extends Resource
             ->headerActions([
                 ExportAction::make()
                     ->exporter(TeamDailyStatExporter::class)
-                    ->fileName(fn () => 'team-daily-' . now()->format('Ymd-His'))
-                    // ->visible(fn () => ! auth()->user()?->hasRole('viewer')), // 只读用户不可导出
+                    ->fileName(fn () => 'team-daily-' . now()->format('Ymd-His')),
+                    
+                Action::make('recalculate')
+                    ->label('批量重新计算')
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('warning')
+                    ->visible(fn () => static::canManage())
+                    ->modalHeading('批量重新计算费用')
+                    ->modalDescription('此操作将重新计算所有团队的费用数据。建议在录入完当天所有团队数据后执行。')
+                    ->modalSubmitActionLabel('开始重新计算')
+                    ->modalCancelActionLabel('取消')
+                    ->form([
+                        Forms\Components\DatePicker::make('date')
+                            ->label('重新计算日期')
+                            ->default(now()->toDateString())
+                            ->required()
+                            ->displayFormat('Y-m-d')
+                            ->validationMessages([
+                                'required' => '请选择要重新计算的日期',
+                            ]),
+                        Forms\Components\Toggle::make('confirm')
+                            ->label('我确认要重新计算该日期的所有团队费用数据')
+                            ->required()
+                            ->validationMessages([
+                                'required' => '请确认操作',
+                            ]),
+                    ])
+                    ->action(function (array $data) {
+                        $date = Carbon::parse($data['date']);
+                        $service = new TeamDailyStatCalculationService();
+                        
+                        // 获取该日期的所有团队记录
+                        $records = \App\Models\TeamDailyStat::whereDate('date', $date->toDateString())->get();
+                        
+                        if ($records->isEmpty()) {
+                            \Filament\Notifications\Notification::make()
+                                ->warning()
+                                ->title('没有找到数据')
+                                ->body("{$date->format('Y-m-d')} 没有找到团队数据记录")
+                                ->send();
+                            return;
+                        }
+                        
+                        $updatedCount = 0;
+                        foreach ($records as $record) {
+                            $oldFixedCost = $record->fixed_cost;
+                            $oldServerIpCost = $record->var_server_ip_cost;
+                            
+                            // 重新计算费用
+                            $newFixedCost = $service->computeFixedCost($date, $record->team_id);
+                            $newServerIpCost = $service->computeServerIpCost($date, $record->team_id, $record->msg_count);
+                            
+                            if ($oldFixedCost != $newFixedCost || $oldServerIpCost != $newServerIpCost) {
+                                $record->fixed_cost = $newFixedCost;
+                                $record->var_server_ip_cost = $newServerIpCost;
+                                $record->saveQuietly();
+                                $updatedCount++;
+                            }
+                        }
+                        
+                        \Filament\Notifications\Notification::make()
+                            ->success()
+                            ->title('重新计算完成')
+                            ->body("已重新计算 {$date->format('Y-m-d')} 的 {$updatedCount} 条记录")
+                            ->send();
+                    })
+                    ->requiresConfirmation(),
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
@@ -261,65 +356,30 @@ class TeamDailyStatResource extends Resource
 
 
     /**
-     * 表单提交时的兜底：统一计算 fixed_cost，防止联动没触发等边缘情况
+     * 表单提交时的兜底：统一计算 fixed_cost 和 var_server_ip_cost，防止联动没触发等边缘情况
      */
     public static function mutateFormDataUsing(array $data): array
     {
         if (!empty($data['date']) && !empty($data['team_id'])) {
-            $data['fixed_cost'] = static::computeFixedCost(
+            $service = new TeamDailyStatCalculationService();
+            $data['fixed_cost'] = $service->computeFixedCost(
                 Carbon::parse($data['date']),
                 (int) $data['team_id']
             );
+            
+            $data['var_server_ip_cost'] = $service->computeServerIpCost(
+                Carbon::parse($data['date']),
+                (int) $data['team_id'],
+                (int) ($data['msg_count'] ?? 0)
+            );
         } else {
             $data['fixed_cost'] = 0.00;
+            $data['var_server_ip_cost'] = 0.00;
         }
         return $data;
     }
 
-    /**
-     * 表单联动时（改日期/改团队）即刻刷新 fixed_cost
-     */
-    protected static function recalcFixedCost(callable $set, callable $get): void
-    {
-        $date   = $get('date');
-        $teamId = $get('team_id');
 
-        if (!$date || !$teamId) {
-            $set('fixed_cost', 0);
-            return;
-        }
-
-        $value = static::computeFixedCost(Carbon::parse($date), (int) $teamId);
-        $set('fixed_cost', $value);
-    }
-
-    /**
-     * 实际计算逻辑：当月总固定费用 ÷ 当月天数 ÷ 当前团队数量
-     */
-    protected static function computeFixedCost(\Carbon\Carbon $date, int $teamId): float
-    {
-        $monthStart = $date->copy()->startOfMonth();
-        $monthEnd   = $date->copy()->endOfMonth();
-    
-        $monthlyAmount = (float) (
-            \App\Models\FixedExpense::query()
-                ->whereYear('month_date', $date->year)
-                ->whereMonth('month_date', $date->month)
-                ->orderByDesc('month_date')
-                ->value('amount') ?? 0
-        );
-    
-        $daysInMonth = $date->daysInMonth;
-    
-        // 只统计启用中的团队；如需全部团队改成 Team::count()
-        $teamCount = (int) \App\Models\Team::where('is_active', true)->count();
-    
-        if ($monthlyAmount <= 0 || $daysInMonth <= 0 || $teamCount <= 0) {
-            return 0.00;
-        }
-    
-        return round($monthlyAmount / $daysInMonth / $teamCount, 2);
-    }
     
     
     

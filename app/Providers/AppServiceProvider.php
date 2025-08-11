@@ -5,7 +5,11 @@ namespace App\Providers;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Schema;
 use App\Models\ExchangeRate;
+use App\Models\TeamDailyStat;
+use App\Models\DailyIpCost;
 use App\Observers\ExchangeRateObserver;
+use App\Observers\TeamDailyStatObserver;
+use App\Observers\DailyIpCostObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -24,5 +28,7 @@ class AppServiceProvider extends ServiceProvider
     {
         //
         ExchangeRate::observe(ExchangeRateObserver::class);
+        TeamDailyStat::observe(TeamDailyStatObserver::class);
+        DailyIpCost::observe(DailyIpCostObserver::class);
     }
 }
