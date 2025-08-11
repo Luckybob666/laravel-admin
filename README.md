@@ -43,8 +43,8 @@
 
 ### 1. 克隆项目
 ```bash
-git clone https://github.com/your-username/team-expense-management.git
-cd team-expense-management
+git clone https://github.com/Luckybob666/laravel-admin.git
+cd laravel-admin
 ```
 
 ### 2. 安装依赖
@@ -85,7 +85,7 @@ npm run build
 php artisan serve
 ```
 
-访问 `http://localhost:8000/admin` 进入管理后台。
+访问 `http://localhost/admin` 进入管理后台。
 
 ## 👥 默认用户
 
