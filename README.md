@@ -37,7 +37,6 @@
 - PHP >= 8.1
 - Composer
 - MySQL >= 8.0
-- Node.js >= 16.0 (用于前端资源编译)
 
 ## 🚀 安装步骤
 
@@ -50,7 +49,6 @@ cd laravel-admin
 ### 2. 安装依赖
 ```bash
 composer install
-npm install
 ```
 
 ### 3. 环境配置
@@ -75,12 +73,9 @@ php artisan migrate
 php artisan db:seed
 ```
 
-### 5. 编译前端资源
-```bash
-npm run build
-```
 
-### 6. 启动开发服务器
+
+### 5. 启动开发服务器
 ```bash
 php artisan serve
 ```
