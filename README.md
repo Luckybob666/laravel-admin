@@ -67,15 +67,39 @@ DB_USERNAME=your_username
 DB_PASSWORD=your_password
 ```
 
-### 4. 数据库迁移和种子数据
+### 4. 创建必要目录并设置权限
+```bash
+# 创建必要的目录（确保目录存在）
+mkdir -p bootstrap/cache
+mkdir -p storage/framework/{cache,sessions,views}
+
+# 设置存储目录权限
+chmod -R 775 storage
+chmod -R 775 bootstrap/cache
+
+# 设置目录所有者（Linux/Unix系统）
+# 对于宝塔面板环境，通常使用 www 用户
+chown -R www:www bootstrap/cache storage
+
+# 对于其他Linux环境，通常使用 www-data 用户
+# sudo chown -R www-data:www-data storage
+# sudo chown -R www-data:www-data bootstrap/cache
+```
+
+### 5. 数据库迁移和种子数据
 ```bash
 php artisan migrate
 php artisan db:seed
 ```
 
+### 6. 生成应用缓存（可选，但推荐）
+```bash
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+```
 
-
-### 5. 启动开发服务器
+### 7. 启动开发服务器
 ```bash
 php artisan serve
 ```
@@ -116,17 +140,63 @@ php artisan serve
 
 ## 🚀 部署
 
+### 重要说明：缓存文件
+项目中的 `bootstrap/cache` 目录被 `.gitignore` 排除是正常的设计：
+- 这些缓存文件会在应用运行时自动生成
+- 不会影响程序的正常安装和运行
+- 在生产环境中，建议运行缓存命令以提高性能
+
 ### 生产环境配置
 ```bash
 # 设置生产环境
 APP_ENV=production
 APP_DEBUG=false
 
+# 创建必要的目录（确保目录存在）
+mkdir -p bootstrap/cache
+mkdir -p storage/framework/{cache,sessions,views}
+
+# 设置目录权限（重要！）
+chmod -R 775 storage
+chmod -R 775 bootstrap/cache
+
+# 设置目录所有者
+# 对于宝塔面板环境
+chown -R www:www bootstrap/cache storage
+
+# 对于其他Linux环境
+# chown -R www-data:www-data storage
+# chown -R www-data:www-data bootstrap/cache
+
 # 优化配置
 php artisan config:cache
 php artisan route:cache
 php artisan view:cache
 ```
+
+### 服务器部署注意事项
+
+#### 宝塔面板环境
+如果使用宝塔面板，请特别注意：
+```bash
+# 1. 确保目录存在
+mkdir -p bootstrap/cache
+mkdir -p storage/framework/{cache,sessions,views}
+
+# 2. 设置权限（宝塔面板通常使用 www 用户）
+chmod -R 775 storage
+chmod -R 775 bootstrap/cache
+chown -R www:www bootstrap/cache storage
+
+# 3. 如果遇到权限问题，可以尝试更宽松的权限
+chmod -R 777 storage
+chmod -R 777 bootstrap/cache
+```
+
+#### 常见问题排查
+- **500错误**：检查目录权限和所有者设置
+- **缓存问题**：清除缓存 `php artisan cache:clear`
+- **日志权限**：确保 `storage/logs` 目录可写
 
 ### 定时任务
 建议设置以下定时任务：
